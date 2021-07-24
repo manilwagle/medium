@@ -1,0 +1,215 @@
+---
+title: "How to deal with Panel Data Using R. Hands on Approach"
+output:
+  word_document: default
+  html_document:
+    df_print: paged
+  pdf_document: default
+---
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## R Markdown
+
+Panel data analysis is one of the very popular econometrics method. It helps us study the cross section and time series data at the same time. For example, we want to understand the factor affecting the rent across multiple cities for multiple time period, then this type of data would be ideal candidate for panel data analysis. Panel data with missing values are called ‘unbalanced Panel’   whereas panel data with no missing values are called ‘Balanced Panel’. Panel data analysis allows us to study individual heterogeneity and allows us control for observable variables of variables that change over time.
+
+In this article, we will be using “Rental data”. The datasets come from Wooldridge's book and can also be downloaded using ‘wooldridge’ package in R. Our objective would be to understand the features that impact our dependent variable, i.e. rent and mostly we are interested in understanding if one of the features, i.e. student population is a significant factor for rent. Lets get started.
+
+Let’s load the required packages, data and do some initial exploration to understand data.
+
+## Data Exploration and Preparation
+
+```{r, warning=FALSE}
+library(plm)
+library(knitr)
+library(broom)
+library(tidyverse)
+library(stargazer)
+library(lmtest)
+library(gplots)
+library(wooldridge)
+library(wooldridge)
+
+
+RENTAL<-read.csv("rentaldata.csv")
+head(RENTAL)
+```
+
+We see that there are lots of columns in our dataset RENTAL. This data set is panel data as it is combination of cross sectional and time data. We have city for cross section and year for time series. So, lets use these features as index and create a new dataset called rental_p.  In this article, we will be focused on few selected columns to understand their relationship with dependent variables, so lets just keep the columns we need and drop the rest.
+
+```{r}
+rental_p<- pdata.frame(RENTAL, index = c("city", "year"))
+keeps<- c("lrent", "y90", "lpop", "lavginc", "pctstu")
+rental_view<- rental_p[keeps]
+head(rental_view)
+```
+
+This dataset has rent related information of 64 different cities across 2 different years. The years have been labelled as either 80 or 90.
+
+lrent refers to log of rent, which is our dependent variable, y90 refers to if the year is 90 or 80. Its 1 if year is 90 if not 0. Similarly, lavginc refers to log of average income, pctstu refers to percent of population students.
+
+
+```{r}
+summary(rental_view)
+```
+
+
+## Modelling
+
+In this article, I will explore three models, namely the OLS, the Fixed Effect and the Random Effects Model. Each model has its own purpose and a suited for a different type of panel data. 
+
+### OLS Model
+
+OLS or the ordinary least square model. It is also termed as the pooled models. This is a Linear Regression model, which ignores the panel structure. It is efficient when the error terms in the model are homoscedastic and not autocorrelated.
+
+```{r}
+ols<- lm(lrent~y90+lpop+lavginc+pctstu, data= RENTAL) 
+summary(ols)
+```
+
+Since the OLS ignores panel structure, we used the original rental data. The model shows that apart from the log of population, all other variables are significant for this model, and the model itself is significant.
+
+### OLS MODEL using plm package
+
+'plm' package is especially used for panel data analysis. Let’s index the data for this model. The results below shows that both models produce same results.
+
+```{r}
+pooled<- plm(lrent~y90+lpop+lavginc+pctstu, data= RENTAL,
+             model = 'pooling', index = c("city", "year"))
+summary(pooled)
+```
+
+Let's tidy up the results using stargazer package
+
+```{r, warning=FALSE}
+stargazer(pooled, type='text')
+```
+
+### Checking the basic assumption of homoscedasticity for OLS Model
+
+Heteroscedasticity assumes variability in the observations of the dependent variable. It is just the opposite of homoscedasticity. First, we will fetch the residuals and fitted values from our OLS model. Let's take percentage of students against the residuals to have a look at the relationship of the model. 
+
+```{r}
+res<- residuals(ols)
+yhat<- fitted(ols)
+plot(RENTAL$pctstu, res, xlab="%students", ylab= "Residuals")
+plot(yhat, res, xlab="Fitted values", ylab= "Residuals")
+```
+
+We can see the spread of the data points which ensures the heteroscedastic nature as clustered patterns are visible. It just translates to the variability of the dependent variable which is the log of the rent value for our dataset. Therefore, we can conclude that OLS is not really the best model to analyze our dataset.
+
+## The Fixed Effect Model
+
+The Fixed Effect model assumes variations within a cross-section which could be due to the inherent characteristics of that entity, which is city for our case. Here, we control for the time invariant characteristics and study the net effect of the predictors in the outcome or rent variable for our dataset. The difference between the fixed effects and the OLS model is changing this model parameter from pooling to within.
+
+```{r}
+fe<- plm(lrent~y90+lpop+lavginc+pctstu, data= rental_p,
+              model = 'within')
+summary(fe)
+```
+
+The model outcome is significant, but the log of the population remains insignificant for this relation, as it was in the OLS model. If we want to check the fixed effects for each city, we can use the fixef function to pull the values. So, to summarize, we have the fixed effects model with two out of four independent variables significant at 0.001 level and one more at 0.01 level or 1% level. Now we have to test whether fixed effects are better than OLS for this case.
+
+```{r}
+fixef(fe)
+```
+
+### Test to see if Fixed Effect Model is better than OLS
+
+Here. null hypothesis is OLS is better than FE model. If it is rejected at alpha of 0.05, we can proceed with the FE.
+
+```{r}
+pFtest(fe, ols)
+```
+
+We can see the p-value is much smaller than 5% level. Therefore, we can reject the null hypothesis and proceed with fixed effects model. Lets tidy up the results
+
+```{r, warning=FALSE}
+stargazer(fe, type='text')
+```
+
+Now, let’s look into the random effects model and check whether that fits our data better.
+
+### Random Effects Model
+
+The random effects model includes the possibility of between entity variations. It also assumes that this variation is random in nature or they are uncorrelated with variables under study.
+
+```{r}
+re<- plm(lrent~y90+lpop+lavginc+pctstu, data= rental_p,model = 'random')
+summary(re)
+```
+
+We can see that the intercept is not significant. But since the overall model is significant, we can proceed to the diagnostic tests to determine if re model fares over the other models. We have already concluded that fixed effects model is better than the OLS model. So now we will compare between fixed effects and random effects model. We will use a very popular diagnostic test for this purpose called Hausman Test. The null hypothesis of this test states that random effects is preferred over fixed effects.
+
+```{r}
+phtest(fe, re)
+```
+
+The p-value here is less than 0.05 Therefore, we can reject the null hypothesis and conclude that the fixed effects model is more suited to rental data.
+
+
+## Analysing the best model
+
+Now we know that fixed effect model is the best for the data, lets analyze the relationship between independent and dependent variables from that model.
+
+```{r}
+summary(fe)
+```
+
+Our initial question we wanted to answer was if the student population has any impact on a city's rent. This model shows that the percentage of student population is significant at 1% level. In comparison, the other variables except population are significant at 0.1% level. The coefficients of the independent variables indicate how much the dependent variable changes over time on average per city, when the independent variables increase by one unit. The independent variables here can explain the dependent variable satisfactory. And this can be further validated by adjusted R-Squared of 95%
+
+## Additional Diagnostics test for Panel Data
+
+Here, I will show you few more diagnostic tests that you may require to analyze other datasets.
+
+### Check to see if Panel Effects exist in data
+
+The hypothesis of this test states that OLS is a better model and the alternative hypothesis suggests random effects to be a better model. Let us conduct the test on our pooled model.
+
+```{r}
+plmtest(pooled, type=c("bp"))
+```
+
+Since the value is much less than 0.05 level, we can reject the null hypothesis and conclude that panel effects indeed exist in the data.
+
+The next two tests are specifically used for macro panels with longer time series. Therefore, it is not suitable for data like this one, which has only two time periods. But for illustration purposes I will show you the diagnostic tests you can use for your own studies.
+
+### Test for cross-sectional dependence
+
+Here we will use two test one is called Breusch-Pagan LM test and the other one is called Pesaran CD test. The null hypothesis for both test is that there is no cross-sectional dependence. If the p-value is less than 0.05 we reject the null and conclude that there is cross-sectional dependence.
+
+```{r}
+pcdtest(fe, test=c("lm"))
+pcdtest(fe, test=c("cd"))
+```
+
+As i mentioned earlier, due to lack of time series, this test is not suitable  to infer anything about the cross-sectional dependence for this data.
+
+### Test for serial correlation
+
+The null hypothesis for this test is that there is no serial correlation. We reject the null if the p-value is less than 0.05 and conclude that serial correlation exists.
+
+```{r}
+pbgtest(fe)
+```
+
+So following the earlier reasons as above, this test is not suitable for the rental dataset.
+
+### Test for heteroscedasticity
+
+Since, I wanted to illustrate the effect of heteroscedasticity graphically, I did not include this test earlier along with the pooled model.
+
+```{r}
+bptest(lrent~y90+lpop+lavginc+pctstu+factor(city), data= rental_p, studentize = F)
+
+```
+
+The null hypothesis assumes homoscedasticity in the data.But the result has a p-value less than 0.05, which allows us to reject the null.and it conforms to our initial analysis that heteroscedasticity exists in this data set.
+
+## Conclusions
+
+I hope you will enjoy this article as much as i enjoyed writing it.
+
